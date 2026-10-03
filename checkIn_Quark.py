@@ -20,7 +20,6 @@ from urllib.parse import unquote, urlparse
 import notify
 import requests
 
-
 INFO_URL = "https://drive-m.quark.cn/1/clouddrive/capacity/growth/info"
 SIGN_URL = "https://drive-m.quark.cn/1/clouddrive/capacity/growth/sign"
 REQUIRED_PARAMS = ("kps", "sign", "vcode")
@@ -142,7 +141,7 @@ def extract_user_note(entry: str) -> str:
 
 
 def account_label(
-    entry: str, index: int, account: dict[str, str] | None = None
+        entry: str, index: int, account: dict[str, str] | None = None
 ) -> str:
     """Return ``第 N 个账号（备注名）`` for logs and push messages."""
 
@@ -153,7 +152,7 @@ def account_label(
 
 
 def register_account_secrets(
-    raw_value: str | None, entries: list[str]
+        raw_value: str | None, entries: list[str]
 ) -> None:
     """Register account credentials so any echo of them is scrubbed.
 
@@ -229,10 +228,10 @@ class Quark:
     """Small client for Quark's mobile growth endpoints."""
 
     def __init__(
-        self,
-        account: dict[str, str],
-        session: requests.Session | None = None,
-        timeout: int = 20,
+            self,
+            account: dict[str, str],
+            session: requests.Session | None = None,
+            timeout: int = 20,
     ) -> None:
         self.account = account
         self.session = session or requests.Session()
@@ -300,7 +299,7 @@ class Quark:
         if not isinstance(cap_sign, dict):
             raise QuarkAPIError("成长信息中缺少 cap_sign 字段")
 
-        vip_label = "88VIP" if growth_info.get("88VIP") else "普通用户"
+        vip_label = "88VIP" if growth_info.get("88VIP") else growth_info.get("member_type", "普通用户")
         total_capacity = growth_info.get("total_capacity", 0)
         composition = growth_info.get("cap_composition") or {}
         accumulated = composition.get("sign_reward", 0)
@@ -332,8 +331,8 @@ class Quark:
 
 
 def main(
-    cookie_value: str | None = None,
-    quark_factory: Callable[[dict[str, str]], Quark] | None = None,
+        cookie_value: str | None = None,
+        quark_factory: Callable[[dict[str, str]], Quark] | None = None,
 ) -> int:
     """Run every configured account and return a process-compatible exit code."""
 
