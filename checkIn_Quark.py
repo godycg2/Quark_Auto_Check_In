@@ -308,8 +308,8 @@ class Quark:
 
         # 账号备注名由调用方放在标题行，这里只描述签到结果本身。
         lines = [
-            vip_label,
-            f"💾 网盘总容量：{self.convert_bytes(total_capacity)}，"
+            f"⭐ 用户类型：{vip_label}",
+            f"☁️ 网盘总容量：{self.convert_bytes(total_capacity)}，"
             f"签到累计容量：{self.convert_bytes(accumulated)}",
         ]
 
