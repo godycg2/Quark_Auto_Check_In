@@ -301,6 +301,7 @@ class PushPayloadTests(unittest.TestCase):
                 texts.append(
                     payload.get("content")
                     or payload.get("markdown", {}).get("content", "")
+                    or payload.get("text", {}).get("content", "")
                 )
         return texts
 

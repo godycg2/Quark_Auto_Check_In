@@ -132,7 +132,7 @@ user=账号一; url=https://...; && user=账号二; url=https://...;
 
 | 渠道 | 变量 | 说明 |
 | --- | --- | --- |
-| 企业微信 | `WECOM_WEBHOOK` | 群机器人 Webhook 完整地址 |
+| 企业微信 | `WECOM_WEBHOOK` | 群机器人 Webhook 完整地址，发送**纯文本**消息（超长自动按 2048 字节截断） |
 | 飞书 | `FEISHU_WEBHOOK`，可选 `FEISHU_SECRET` | 自定义机器人地址；开启“签名校验”时填写密钥 |
 | 钉钉 | `DINGTALK_WEBHOOK`，可选 `DINGTALK_SECRET` | 自定义机器人地址；使用“加签”时填写密钥 |
 | 群晖 Chat | `SYNOLOGY_CHAT_URL` | 群晖 Chat 的“传入 Webhook”完整地址（含 `token`） |

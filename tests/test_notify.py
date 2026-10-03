@@ -101,15 +101,27 @@ class MessageTests(unittest.TestCase):
 
 
 class WecomTests(unittest.TestCase):
-    def test_sends_markdown_and_accepts_ok(self):
+    def test_sends_plain_text_and_accepts_ok(self):
         session = FakeSession([FakeResponse({"errcode": 0, "errmsg": "ok"})])
         WecomNotifier(WECOM_URL, session=session).send(Message("夸克自动签到", "✅ 签到成功"))
 
         method, url, kwargs = session.calls[0]
         self.assertEqual(method, "POST")
         self.assertEqual(url, WECOM_URL)
-        self.assertEqual(kwargs["json"]["msgtype"], "markdown")
-        self.assertIn("✅ 签到成功", kwargs["json"]["markdown"]["content"])
+        self.assertEqual(kwargs["json"]["msgtype"], "text")
+        self.assertNotIn("markdown", kwargs["json"])
+        self.assertIn("✅ 签到成功", kwargs["json"]["text"]["content"])
+
+    def test_long_content_fits_text_message_limit(self):
+        """企业微信 text 消息上限 2048 字节，超长内容必须截断。"""
+
+        session = FakeSession([FakeResponse({"errcode": 0})])
+        WecomNotifier(WECOM_URL, session=session).send(
+            Message("夸克自动签到", "第 1 个账号签到成功\n" * 500)
+        )
+        content = session.calls[0][2]["json"]["text"]["content"]
+        self.assertLessEqual(len(content.encode("utf-8")), 2048)
+        self.assertIn("已截断", content)
 
     def test_error_code_raises_without_leaking_webhook_key(self):
         session = FakeSession(

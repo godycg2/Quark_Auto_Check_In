@@ -5,7 +5,7 @@
 
 已支持的渠道（括号内为环境变量）：
 
-- 企业微信（群机器人）：``WECOM_WEBHOOK``
+- 企业微信（群机器人，纯文本消息）：``WECOM_WEBHOOK``
 - 飞书（自定义机器人）：``FEISHU_WEBHOOK``，可选 ``FEISHU_SECRET`` 加签
 - 钉钉（自定义机器人）：``DINGTALK_WEBHOOK``，可选 ``DINGTALK_SECRET`` 加签
 - 群晖 Chat（传入 Webhook）：``SYNOLOGY_CHAT_URL``
@@ -284,11 +284,15 @@ class Notifier:
 
 
 class WecomNotifier(Notifier):
-    """企业微信群机器人。"""
+    """企业微信群机器人，发送纯文本消息。
+
+    企业微信 text 消息上限 2048 字节（markdown 才是 4096），这里按更小的
+    上限截断；推送内容本身不含 markdown 语法，用文本消息展示更干净。
+    """
 
     name = "wecom"
     label = "企业微信"
-    max_bytes = 4000
+    max_bytes = 2000
 
     def __init__(self, webhook: str, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -298,8 +302,8 @@ class WecomNotifier(Notifier):
         payload = self._post(
             self.endpoint,
             json={
-                "msgtype": "markdown",
-                "markdown": {"content": self.render(message)},
+                "msgtype": "text",
+                "text": {"content": self.render(message)},
             },
         )
         self._require_ok(payload, payload.get("errcode"))

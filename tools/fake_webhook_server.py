@@ -162,8 +162,10 @@ def run_selftest() -> int:
     checks = [
         ("5 个渠道各收到 1 次请求", len(RECEIVED) == 5),
         (
-            "企业微信：markdown + 标题",
-            json.loads(by_path["/wecom"]["body"])["msgtype"] == "markdown",
+            "企业微信：纯文本消息",
+            json.loads(by_path["/wecom"]["body"])["msgtype"] == "text"
+            and "签到成功"
+            in json.loads(by_path["/wecom"]["body"])["text"]["content"],
         ),
         (
             "飞书：text 消息",
