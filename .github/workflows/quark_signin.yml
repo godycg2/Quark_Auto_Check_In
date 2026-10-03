@@ -66,6 +66,30 @@ jobs:
         if: steps.cache-success.outputs.cache-hit != 'true'
         env:
           COOKIE_QUARK: ${{ secrets.COOKIE_QUARK }}
+          # 消息推送渠道：按需在仓库 Secrets 中配置，未配置的渠道不会启用。
+          # Webhook 类变量支持多行，一次推送到多个群。
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          SYNOLOGY_CHAT_URL: ${{ secrets.SYNOLOGY_CHAT_URL }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          BARK_SERVER: ${{ secrets.BARK_SERVER }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          GOTIFY_URL: ${{ secrets.GOTIFY_URL }}
+          GOTIFY_TOKEN: ${{ secrets.GOTIFY_TOKEN }}
+          GENERIC_WEBHOOK: ${{ secrets.GENERIC_WEBHOOK }}
+          GENERIC_WEBHOOK_HEADERS: ${{ secrets.GENERIC_WEBHOOK_HEADERS }}
+          NOTIFY_ENABLED: ${{ vars.NOTIFY_ENABLED }}
+          NOTIFY_TIMEOUT: ${{ vars.NOTIFY_TIMEOUT }}
         run: python checkIn_Quark.py
 
       - name: 生成今日成功标记

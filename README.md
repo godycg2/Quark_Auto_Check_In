@@ -10,6 +10,7 @@
 - 当天所有账号成功后写入日期缓存，第二次任务自动跳过。
 - 多账号逐个执行；某个账号失败不会阻断其他账号。
 - 任何账号失败时工作流返回失败，并保留当天第二次重试机会。
+- 签到结束后把汇总结果推送到企业微信、飞书、钉钉、群晖 Chat 等 11 种渠道。
 - 每月在独立的 `heartbeat` 分支生成保活提交，不污染 `main` 历史。
 
 ## 📋 使用方法
@@ -123,7 +124,84 @@ user=账号二; url=https://...;
 user=账号一; url=https://...; && user=账号二; url=https://...;
 ```
 
-### 4. 手动测试
+### 4. 配置消息推送（可选）
+
+签到结束后脚本会把每个账号的结果汇总成一条消息，推送到所有已配置的渠道。渠道由环境变量启用，**只配置需要的变量即可**，未配置的渠道不会发起任何请求。
+
+这些变量同样填在 **Settings → Secrets and variables → Actions** 中（地址和密钥属于敏感信息，请使用 Secret；`NOTIFY_ENABLED`、`NOTIFY_TIMEOUT` 这类开关可以放在 Variable 里）。
+
+| 渠道 | 变量 | 说明 |
+| --- | --- | --- |
+| 企业微信 | `WECOM_WEBHOOK` | 群机器人 Webhook 完整地址 |
+| 飞书 | `FEISHU_WEBHOOK`，可选 `FEISHU_SECRET` | 自定义机器人地址；开启“签名校验”时填写密钥 |
+| 钉钉 | `DINGTALK_WEBHOOK`，可选 `DINGTALK_SECRET` | 自定义机器人地址；使用“加签”时填写密钥 |
+| 群晖 Chat | `SYNOLOGY_CHAT_URL` | 群晖 Chat 的“传入 Webhook”完整地址（含 `token`） |
+| Server 酱 | `SERVERCHAN_SENDKEY` | 兼容 `SCT` 与 `sctp` 开头的两种密钥 |
+| PushPlus | `PUSHPLUS_TOKEN` | 使用 markdown 模板推送 |
+| Bark | `BARK_URL`，或 `BARK_KEY` + 可选 `BARK_SERVER` | 例如 `https://api.day.app/设备Key` |
+| Telegram | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | |
+| ntfy | `NTFY_TOPIC`，可选 `NTFY_SERVER`、`NTFY_TOKEN` | 默认服务器 `https://ntfy.sh` |
+| Gotify | `GOTIFY_URL` + `GOTIFY_TOKEN` | |
+| 通用 Webhook | `GENERIC_WEBHOOK`，可选 `GENERIC_WEBHOOK_HEADERS` | 以 `{"title", "content", "source"}` 形式 POST，认证头用 JSON 对象填写 |
+
+两个通用开关：
+
+- `NOTIFY_ENABLED`：填 `false` 可临时关闭全部推送。
+- `NOTIFY_TIMEOUT`：单次推送请求的超时秒数，默认 `10`。
+
+企业微信、飞书、钉钉、群晖 Chat、通用 Webhook 这几类变量支持**多行**，每行一个地址即可同时推送到多个群：
+
+```text
+https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx
+https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=yyy
+```
+
+推送行为说明：
+
+- 推送内容按账号逐条列出，标题行使用 `COOKIE_QUARK` 中的 `user` 备注名，并用 ✅/❌ 标出每个账号的成败；没写 `user` 时回退为「账号1」「账号2」。
+- 有账号失败时，消息标题会变成「夸克自动签到（N 个账号失败）」，方便在通知栏直接看到整体结果。
+- 推送发生在所有账号处理完之后；签到成功、部分失败、以及 `COOKIE_QUARK` 配置错误时都会推送。
+- 单个渠道失败只在日志里输出 `⚠️ 推送失败：…`，**不会**改变签到任务的成败，也不会因为推送失败而触发签到重试。
+- 日志只显示渠道域名（如 `qyapi.weixin.qq.com`），不会打印完整 Webhook 地址或密钥。
+- 同一天里“已签到跳过”的那次运行不会重复推送，避免收到两条相同结果。
+- 消息超过渠道长度上限时会自动截断。
+
+推送内容示例：
+
+```text
+夸克自动签到
+共 2 个账号，成功 1，失败 1
+
+✅ 第 1 个账号（张三）
+88VIP
+💾 网盘总容量：10.00 GB，签到累计容量：2.00 GB
+✅ 签到成功 +1.00 GB，连签进度（3/7）
+
+❌ 第 2 个账号（李四）
+❌ 凭证失效
+```
+
+想先验证推送配置，可以在本地直接运行：
+
+```bash
+# Linux / macOS
+WECOM_WEBHOOK='https://...' python notify.py --title 测试 --content 你好
+
+# Windows PowerShell
+$env:WECOM_WEBHOOK='https://...'; python notify.py --title 测试 --content 你好
+
+# 只查看当前识别到了哪些渠道
+python notify.py --list-channels
+```
+
+不想打扰真实群、只想看报文长什么样时，可以用仓库自带的假服务器（收到请求后会把请求头和请求体打印出来）：
+
+```bash
+python tools/fake_webhook_server.py --selftest   # 起服务 → 推送 → 校验报文 → 退出
+python tools/fake_webhook_server.py --port 8808  # 只起服务，手动把渠道变量指向它
+```
+
+### 5. 手动测试
 
 进入 **Actions → 夸克网盘每日签到 → Run workflow**。第一次运行会真实请求签到接口；当天全部账号已经成功后，再次运行将显示“今日已全部签到成功，跳过重复执行”。
 
@@ -132,8 +210,9 @@ user=账号一; url=https://...; && user=账号二; url=https://...;
 1. 工作流按北京时间生成当天的缓存键。
 2. 如果缓存命中，签到相关步骤全部跳过。
 3. 如果没有命中，逐个处理 `COOKIE_QUARK` 中的账号。
-4. 所有账号成功或已签到时，保存当天成功标记。
-5. 任一账号配置错误、凭证失效或接口异常时，工作流失败且不保存标记，13:00 会再次尝试。
+4. 全部账号处理完成后，把汇总结果推送到所有已配置的渠道。
+5. 所有账号成功或已签到时，保存当天成功标记。
+6. 任一账号配置错误、凭证失效或接口异常时，工作流失败且不保存标记，13:00 会再次尝试；推送失败不影响这一判断。
 
 ## ❓ 常见问题
 
@@ -153,13 +232,40 @@ user=账号一; url=https://...; && user=账号二; url=https://...;
 
 GitHub Actions 的计划任务可能延迟数分钟到数十分钟，这是平台调度机制导致的正常现象。工作流还会加入最多 60 秒的随机延迟。
 
+### 收不到推送消息
+
+先确认变量名拼写正确，并且配置在**实际运行工作流的那个仓库**里（Fork 之后需要在 Fork 仓库里配置）。然后可以在本地用 `python notify.py --list-channels` 查看脚本识别到了哪些渠道，再用 `python notify.py --title 测试 --content 你好` 推送一条测试消息，日志会给出具体原因（签名错误、Webhook 失效、网络超时等）。由于推送失败不会让签到任务失败，Actions 里需要查看日志中的 `⚠️ 推送失败` 行。
+
 ### 保活分支为什么每月被强制更新
 
 `heartbeat` 是专门的孤儿分支，每月仅保留最新一条空提交，用于避免长期无活动的 Fork 被 GitHub 自动停用定时任务；它不会改动 `main`。
 
+## 🔐 日志与密钥安全
+
+GitHub Actions 的运行日志是公开可见的（Fork 仓库尤其如此），因此脚本对输出做了三层处理：
+
+1. **不打印凭据**：日志里只会出现账号备注名、容量数字和渠道域名（如 `qyapi.weixin.qq.com`），不会出现 `kps`/`sign`/`vcode`、完整 Webhook 地址或 Token。
+2. **备注名清洗**：`user=` 只用于显示，最长 32 字符；若其中出现 `kps=`、`token=`、`http://` 等字样（例如把 `;` 误写成 `&`，导致整串参数落进 `user` 字段），就直接放弃展示，显示为「账号1」，避免把凭据当成名字打印出来。
+3. **统一脱敏**：脚本会把账号凭据、各推送渠道的地址与 Token 登记为敏感串，任何要输出的文本——包括第三方接口回显在错误信息里的内容——在打印和推送前都会把命中的敏感串替换成 `***`。
+
+工作流本身只在 `env:` 中引用 Secrets，没有任何 `echo` 输出；GitHub 也会自动屏蔽 Secrets 的原文。
+
+自查方法：
+
+```bash
+# 单元测试：覆盖 15 个脱敏 / 泄露场景（日志、推送报文、接口回显、URL 条目等）
+python -m unittest discover -s tests -p "test_log_safety.py" -v
+
+# 本地假服务器：默认隐藏 Authorization 头，需要查看原文时加 --show-secrets
+python tools/fake_webhook_server.py --selftest
+```
+
+即便如此，仍建议：不要把凭据写进 `user=`，不要在 Issue 或截图里贴出 `COOKIE_QUARK`、Webhook 地址；一旦怀疑泄露，立即在夸克 App 退出登录并重新抓取，同时在对应平台重建机器人。
+
 ## ⚠️ 注意事项
 
 - 本项目仅供学习交流，请勿用于非法用途。
+- 推送 Webhook 地址和密钥同样具有操作权限，请只保存在仓库 Secrets 中，不要提交到代码、Issue 或公开截图。
 - 夸克接口和参数可能随官方更新而变化；出现集中失效时请先查看 Issues。
 - 频繁手动触发可能被服务限制，请谨慎操作。
 - 本项目采用 MIT License。复制和分发时请保留原作者版权及许可声明。

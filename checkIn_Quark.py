@@ -3,6 +3,10 @@
 The script accepts one or more account entries from ``COOKIE_QUARK``. Accounts
 may be separated by a newline or ``&&``. Both the legacy kps/sign/vcode format
 and the newer captured-URL format are supported.
+
+After every account is processed the summary is pushed to each notification
+channel configured through the environment (see ``notify.py``); a failing
+channel only logs a warning and never changes the sign-in exit code.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ import sys
 from typing import Callable
 from urllib.parse import unquote, urlparse
 
+import notify
 import requests
 
 
@@ -29,10 +34,31 @@ class QuarkAPIError(RuntimeError):
     """Raised when the Quark API cannot complete a sign-in operation."""
 
 
-def send(title: str, message: str) -> None:
-    """Print a notification-compatible summary."""
+def log(message: str = "") -> None:
+    """Print one line after scrubbing every registered credential."""
 
-    print(f"{title}:\n{message}")
+    print(notify.redact(message))
+
+
+def send(title: str, message: str) -> list[str]:
+    """Print the summary and push it to every configured channel.
+
+    Both the console output and the pushed message are scrubbed first, so a
+    credential that somehow ended up in an error string never reaches the
+    Actions log or a chat group.
+    """
+
+    title = notify.redact(title)
+    message = notify.redact(message)
+    log(f"{title}:\n{message}")
+    return list(notify.push(title, message).failures)
+
+
+def report_push_failures(failures: list[str]) -> None:
+    """Print push failures as warnings without changing the sign-in result."""
+
+    for failure in failures:
+        log(f"⚠️ 推送失败：{failure}")
 
 
 def split_account_entries(raw_value: str | None) -> list[str]:
@@ -69,20 +95,112 @@ def extract_params(url: str) -> dict[str, str]:
     return {name: query.get(name, "") for name in REQUIRED_PARAMS}
 
 
+_NOTE_MAX_LENGTH = 32
+_NOTE_FORBIDDEN = (
+    "kps=",
+    "sign=",
+    "vcode=",
+    "token=",
+    "key=",
+    "secret",
+    "http://",
+    "https://",
+    "cookie",
+)
+
+
+def _sanitize_user_note(value: str) -> str:
+    """Make a ``user=`` note safe to display.
+
+    The note only labels an account, so anything that looks like a captured
+    URL or a credential is dropped instead of being logged or pushed.
+    """
+
+    note = "".join(char for char in value.strip() if char.isprintable())
+    lowered = note.lower()
+    if any(hint in lowered for hint in _NOTE_FORBIDDEN):
+        return ""
+    if len(note) > _NOTE_MAX_LENGTH:
+        note = note[:_NOTE_MAX_LENGTH] + "…"
+    return note
+
+
+def extract_user_note(entry: str) -> str:
+    """Read the ``user=`` note from a raw entry without validating it.
+
+    This runs before :func:`parse_account`, so an entry that is invalid (or
+    whose credentials were rejected) can still be reported by name.
+    """
+
+    for field in re.split(r";|\r?\n", entry):
+        if "=" not in field:
+            continue
+        key, value = field.split("=", 1)
+        if key.strip().lower() == "user":
+            return _sanitize_user_note(value)
+    return ""
+
+
+def account_label(
+    entry: str, index: int, account: dict[str, str] | None = None
+) -> str:
+    """Return ``第 N 个账号（备注名）`` for logs and push messages."""
+
+    name = _sanitize_user_note((account or {}).get("user", "")) or extract_user_note(
+        entry
+    )
+    return f"第 {index} 个账号（{name or f'账号{index}'}）"
+
+
+def register_account_secrets(
+    raw_value: str | None, entries: list[str]
+) -> None:
+    """Register account credentials so any echo of them is scrubbed.
+
+    Values are split on ``;``, ``&`` and ``?`` so the credentials inside a
+    captured URL are registered even when the entry itself is malformed.
+    ``user`` is intentionally excluded: it is the display name we want to
+    keep visible in the push message.
+    """
+
+    notify.register_secret(raw_value)
+    for entry in entries:
+        notify.register_secret(entry)
+        for field in re.split(r";|\r?\n|&|\?", entry):
+            if "=" not in field:
+                continue
+            key, value = field.split("=", 1)
+            if key.strip().lower() == "user":
+                continue
+            notify.register_secret(value)
+
+
+def register_account_credentials(account: dict[str, str]) -> None:
+    """Register the credentials of a successfully parsed account."""
+
+    for key in REQUIRED_PARAMS:
+        notify.register_secret(account.get(key))
+
+
 def parse_account(entry: str, index: int) -> dict[str, str]:
-    """Parse and validate one account entry."""
+    """Parse and validate one account entry.
+
+    Error messages stay account-agnostic; the caller prefixes them with
+    :func:`account_label`, which knows the ``user`` note.
+    """
 
     account: dict[str, str] = {}
-    for field in entry.split(";"):
+    for position, field in enumerate(entry.split(";"), start=1):
         field = field.strip()
         if not field:
             continue
         if "=" not in field:
-            raise ConfigError(f"第 {index} 个账号存在无效字段：{field}")
+            # Never echo the raw text: it may be a stray credential.
+            raise ConfigError(f"第 {position} 个字段格式错误（应为 key=value）")
         key, value = field.split("=", 1)
         key = key.strip()
         if not key:
-            raise ConfigError(f"第 {index} 个账号存在空字段名")
+            raise ConfigError(f"第 {position} 个字段的字段名为空")
         account[key] = value.strip()
 
     if "url" in account:
@@ -91,9 +209,7 @@ def parse_account(entry: str, index: int) -> dict[str, str]:
 
     missing = [key for key in REQUIRED_PARAMS if not account.get(key)]
     if missing:
-        raise ConfigError(
-            f"第 {index} 个账号缺少必要参数：{', '.join(missing)}"
-        )
+        raise ConfigError(f"缺少必要参数：{', '.join(missing)}")
 
     account.setdefault("user", f"账号{index}")
     return account
@@ -184,7 +300,6 @@ class Quark:
         if not isinstance(cap_sign, dict):
             raise QuarkAPIError("成长信息中缺少 cap_sign 字段")
 
-        user = self.account["user"]
         vip_label = "88VIP" if growth_info.get("88VIP") else "普通用户"
         total_capacity = growth_info.get("total_capacity", 0)
         composition = growth_info.get("cap_composition") or {}
@@ -192,8 +307,9 @@ class Quark:
         progress = cap_sign.get("sign_progress", "?")
         target = cap_sign.get("sign_target", "?")
 
+        # 账号备注名由调用方放在标题行，这里只描述签到结果本身。
         lines = [
-            f"{vip_label} {user}",
+            vip_label,
             f"💾 网盘总容量：{self.convert_bytes(total_capacity)}，"
             f"签到累计容量：{self.convert_bytes(accumulated)}",
         ]
@@ -221,7 +337,14 @@ def main(
 ) -> int:
     """Run every configured account and return a process-compatible exit code."""
 
-    print("----------夸克网盘开始签到----------")
+    notify.relax_console_encoding()
+    notify.register_env_secrets()
+    log("----------夸克网盘开始签到----------")
+    labels = notify.channel_labels()
+    if labels:
+        log(f"📮 已启用推送渠道：{'、'.join(labels)}")
+    else:
+        log("📮 未配置推送渠道，结果仅输出到日志")
     if cookie_value is None:
         cookie_value = os.getenv("COOKIE_QUARK")
     quark_factory = quark_factory or Quark
@@ -229,29 +352,46 @@ def main(
     try:
         entries = split_account_entries(cookie_value)
     except ConfigError as exc:
-        print(f"❌ {exc}")
+        log(f"❌ {exc}")
+        report_push_failures(send("夸克自动签到（配置错误）", str(exc)))
         return 2
 
-    print(f"✅ 检测到共 {len(entries)} 个夸克账号\n")
+    register_account_secrets(cookie_value, entries)
+    log(f"✅ 检测到共 {len(entries)} 个夸克账号\n")
     results: list[str] = []
     failures = 0
 
     for index, entry in enumerate(entries, start=1):
-        heading = f"🙍🏻‍♂️ 第 {index} 个账号"
+        account: dict[str, str] | None = None
         try:
             account = parse_account(entry, index)
+            register_account_credentials(account)
             result = quark_factory(account).do_sign()
-            results.append(f"{heading}\n{result}")
         except (ConfigError, QuarkAPIError, KeyError, TypeError, ValueError) as exc:
             failures += 1
-            results.append(f"{heading}\n❌ {exc}")
+            results.append(
+                f"❌ {account_label(entry, index, account)}\n❌ {notify.redact(str(exc))}"
+            )
         except Exception as exc:  # Keep later accounts running on unexpected errors.
             failures += 1
-            results.append(f"{heading}\n❌ 未知错误：{type(exc).__name__}")
+            results.append(
+                f"❌ {account_label(entry, index, account)}\n"
+                f"❌ 未知错误：{type(exc).__name__}"
+            )
+        else:
+            results.append(
+                f"✅ {account_label(entry, index, account)}\n{notify.redact(result)}"
+            )
 
-    summary = "\n\n".join(results)
-    send("夸克自动签到", summary)
-    print(
+    headline = (
+        f"共 {len(entries)} 个账号，成功 {len(entries) - failures}，失败 {failures}"
+    )
+    summary = "\n\n".join([headline, *results])
+    title = "夸克自动签到"
+    if failures:
+        title = f"夸克自动签到（{failures} 个账号失败）"
+    report_push_failures(send(title, summary))
+    log(
         f"\n----------执行完毕：成功 {len(entries) - failures}，失败 {failures}----------"
     )
     return 1 if failures else 0
