@@ -205,10 +205,32 @@ python tools/fake_webhook_server.py --port 8808  # 只起服务，手动把渠�
 
 进入 **Actions → 夸克网盘每日签到 → Run workflow**。第一次运行会真实请求签到接口；当天全部账号已经成功后，再次运行将显示“今日已全部签到成功，跳过重复执行”。
 
+**想忽略“今日已签到”标记、强制再跑一次**（例如验证推送是否配好），有两种方式：
+
+1. 手动触发时把 **force** 勾选为 `true` —— 不删缓存，直接重跑签到步骤：
+
+   **Actions → 夸克网盘每日签到 → Run workflow → force 选 true → Run workflow**
+
+2. 删掉当天的缓存标记，再正常触发一次：
+
+   **Settings → Actions → Caches**（或左侧 **Actions → Caches**）→ 找到 `quark-signed-YYYY-MM-DD`（北京时间当天日期）→ 删除 → 回到 Actions 手动运行。
+
+   ```bash
+   # 用 GitHub CLI 也可以（先把 owner/repo 换成你自己的）
+   gh cache list -R godycg2/Quark_Auto_Check_In
+   gh cache delete "quark-signed-2026-10-03" -R godycg2/Quark_Auto_Check_In
+
+   # 或者用 API（需要带 actions:write 权限的 token）
+   curl -X DELETE -H "Authorization: Bearer $GITHUB_TOKEN" \
+     "https://api.github.com/repos/godycg2/Quark_Auto_Check_In/actions/caches?key=quark-signed-2026-10-03"
+   ```
+
+> 不用担心重复领奖：夸克接口本身是幂等的，当天已经签过会返回“✅ 今日已签到 +X”，脚本把它当作成功处理，不会重复领取，也不会报错。强制重跑只是让工作流再走一遍签到、推送流程。
+
 ## 🔁 执行与重试逻辑
 
 1. 工作流按北京时间生成当天的缓存键。
-2. 如果缓存命中，签到相关步骤全部跳过。
+2. 如果缓存命中（且手动触发时没有勾选 `force`），签到相关步骤全部跳过。
 3. 如果没有命中，逐个处理 `COOKIE_QUARK` 中的账号。
 4. 全部账号处理完成后，把汇总结果推送到所有已配置的渠道。
 5. 所有账号成功或已签到时，保存当天成功标记。

@@ -5,6 +5,11 @@ on:
     - cron: "0 1 * * *" # 北京时间 09:00
     - cron: "0 5 * * *" # 北京时间 13:00，失败兜底
   workflow_dispatch:
+    inputs:
+      force:
+        description: "忽略今日已签到标记，强制重新执行一次签到（用于验证推送或手动补跑）"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,15 +36,15 @@ jobs:
           key: quark-signed-${{ steps.date.outputs.today }}
 
       - name: 今日已完成签到
-        if: steps.cache-success.outputs.cache-hit == 'true'
+        if: steps.cache-success.outputs.cache-hit == 'true' && github.event.inputs.force != 'true'
         run: echo "今日已全部签到成功，跳过重复执行。"
 
       - name: 检出代码
-        if: steps.cache-success.outputs.cache-hit != 'true'
+        if: steps.cache-success.outputs.cache-hit != 'true' || github.event.inputs.force == 'true'
         uses: actions/checkout@v7
 
       - name: 随机延迟
-        if: steps.cache-success.outputs.cache-hit != 'true'
+        if: steps.cache-success.outputs.cache-hit != 'true' || github.event.inputs.force == 'true'
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -52,18 +57,18 @@ jobs:
           sleep "$delay"
 
       - name: 设置 Python 环境
-        if: steps.cache-success.outputs.cache-hit != 'true'
+        if: steps.cache-success.outputs.cache-hit != 'true' || github.event.inputs.force == 'true'
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
 
       - name: 安装依赖
-        if: steps.cache-success.outputs.cache-hit != 'true'
+        if: steps.cache-success.outputs.cache-hit != 'true' || github.event.inputs.force == 'true'
         run: python -m pip install --disable-pip-version-check -r requirements.txt
 
       - name: 执行签到脚本
-        if: steps.cache-success.outputs.cache-hit != 'true'
+        if: steps.cache-success.outputs.cache-hit != 'true' || github.event.inputs.force == 'true'
         env:
           COOKIE_QUARK: ${{ secrets.COOKIE_QUARK }}
           # 消息推送渠道：按需在仓库 Secrets 中配置，未配置的渠道不会启用。
