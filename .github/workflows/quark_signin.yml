@@ -69,12 +69,20 @@ jobs:
             *) slot="非定时触发（手动或其它）" ;;
           esac
           echo "================ 运行时时间信息 ================"
-          echo "北京时间 (Asia/Shanghai)：$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S %Z')"
-          echo "UTC 时间　　　　　　　　：$(TZ='UTC' date +'%Y-%m-%d %H:%M:%S UTC')"
+          echo "北京时间 (Asia/Shanghai)：$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')（时区偏移 $(TZ='Asia/Shanghai' date +%z)）"
+          echo "UTC 时间　　　　　　　　：$(TZ='UTC' date +'%Y-%m-%d %H:%M:%S')（时区偏移 $(TZ='UTC' date +%z)）"
           echo "触发方式：${{ github.event_name }}"
           echo "计划槽位：${slot}"
           echo "今日运行次数：第 ${{ steps.count.outputs.count }} 次"
           echo "==============================================="
+
+      - name: 保存今日运行次数
+        # 必须放在“检出代码”之前保存：actions/checkout 默认会执行 git clean -ffdx，
+        # 会清掉工作区里未跟踪的 .cache/quark-run-count。
+        uses: actions/cache/save@v6
+        with:
+          path: .cache/quark-run-count
+          key: quark-runs-${{ steps.date.outputs.today }}-${{ github.run_number }}-${{ github.run_attempt }}
 
       - name: 恢复今日成功标记
         id: cache-success
@@ -157,12 +165,3 @@ jobs:
         with:
           path: .cache/quark-signin
           key: quark-signed-${{ steps.date.outputs.today }}
-
-      - name: 保存今日运行次数
-        # 即使签到失败也要记录“今天已经跑过几次”，所以用 always()；
-        # count 未算出时（例如更早的步骤异常）跳过，避免保存空目录。
-        if: always() && steps.count.outputs.count != ''
-        uses: actions/cache/save@v6
-        with:
-          path: .cache/quark-run-count
-          key: quark-runs-${{ steps.date.outputs.today }}-${{ github.run_number }}-${{ github.run_attempt }}
