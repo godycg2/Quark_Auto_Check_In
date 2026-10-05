@@ -2,8 +2,9 @@ name: 夸克网盘每日签到
 
 on:
   schedule:
-    - cron: "0 1 * * *" # 北京时间 09:00
-    - cron: "0 5 * * *" # 北京时间 13:00，失败兜底
+    # GitHub Actions 使用 UTC 时间，北京时间 = UTC + 8。
+    - cron: "0 17 * * *" # UTC 17:00 = 北京时间次日 01:00
+    - cron: "0 21 * * *" # UTC 21:00 = 北京时间次日 05:00，失败兜底
   workflow_dispatch:
     inputs:
       force:
@@ -26,7 +27,54 @@ jobs:
       - name: 获取北京时间日期
         id: date
         shell: bash
-        run: echo "today=$(TZ='Asia/Shanghai' date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+        run: |
+          today=$(TZ='Asia/Shanghai' date +'%Y-%m-%d')
+          echo "today=$today" >> "$GITHUB_OUTPUT"
+          echo "北京时间：$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S') (CST/UTC+8)"
+
+      - name: 恢复今日运行次数
+        id: run-count
+        uses: actions/cache/restore@v6
+        with:
+          path: .cache/quark-run-count
+          key: quark-runs-${{ steps.date.outputs.today }}-${{ github.run_number }}-${{ github.run_attempt }}
+          restore-keys: |
+            quark-runs-${{ steps.date.outputs.today }}-
+
+      - name: 计算今日第几次运行
+        id: count
+        shell: bash
+        run: |
+          count_file=.cache/quark-run-count/count
+          if [ -f "$count_file" ]; then
+            count=$(cat "$count_file" 2>/dev/null || echo 0)
+          else
+            count=0
+          fi
+          # 缓存缺失或内容损坏时按 0 处理，避免非数字导致计算失败。
+          case "$count" in
+            ''|*[!0-9]*) count=0 ;;
+          esac
+          count=$((count + 1))
+          mkdir -p .cache/quark-run-count
+          echo "$count" > "$count_file"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: 打印运行时北京时间
+        shell: bash
+        run: |
+          case "${{ github.event.schedule }}" in
+            "0 17 * * *") slot="01:00（当天第 1 次计划运行）" ;;
+            "0 21 * * *") slot="05:00（当天第 2 次计划运行，失败兜底）" ;;
+            *) slot="非定时触发（手动或其它）" ;;
+          esac
+          echo "================ 运行时时间信息 ================"
+          echo "北京时间 (Asia/Shanghai)：$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S %Z')"
+          echo "UTC 时间　　　　　　　　：$(TZ='UTC' date +'%Y-%m-%d %H:%M:%S UTC')"
+          echo "触发方式：${{ github.event_name }}"
+          echo "计划槽位：${slot}"
+          echo "今日运行次数：第 ${{ steps.count.outputs.count }} 次"
+          echo "==============================================="
 
       - name: 恢复今日成功标记
         id: cache-success
@@ -109,3 +157,12 @@ jobs:
         with:
           path: .cache/quark-signin
           key: quark-signed-${{ steps.date.outputs.today }}
+
+      - name: 保存今日运行次数
+        # 即使签到失败也要记录“今天已经跑过几次”，所以用 always()；
+        # count 未算出时（例如更早的步骤异常）跳过，避免保存空目录。
+        if: always() && steps.count.outputs.count != ''
+        uses: actions/cache/save@v6
+        with:
+          path: .cache/quark-run-count
+          key: quark-runs-${{ steps.date.outputs.today }}-${{ github.run_number }}-${{ github.run_attempt }}
