@@ -6,7 +6,10 @@ and the newer captured-URL format are supported.
 
 After every account is processed the summary is pushed to each notification
 channel configured through the environment (see ``notify.py``); a failing
-channel only logs a warning and never changes the sign-in exit code.
+channel only logs a warning and never changes the sign-in exit code. A summary
+containing any failure (including a COOKIE_QUARK configuration error)
+@mentions everyone in the group chats that support it (WeCom, Feishu,
+DingTalk); an all-success summary stays silent.
 """
 
 from __future__ import annotations
@@ -39,18 +42,21 @@ def log(message: str = "") -> None:
     print(notify.redact(message))
 
 
-def send(title: str, message: str) -> list[str]:
+def send(title: str, message: str, mention_all: bool = False) -> list[str]:
     """Print the summary and push it to every configured channel.
 
     Both the console output and the pushed message are scrubbed first, so a
     credential that somehow ended up in an error string never reaches the
-    Actions log or a chat group.
+    Actions log or a chat group. When ``mention_all`` is True the failure
+    notification @mentions everyone in the supported group chats.
     """
 
     title = notify.redact(title)
     message = notify.redact(message)
     log(f"{title}:\n{message}")
-    return list(notify.push(title, message).failures)
+    return list(
+        notify.push(title, message, mention_all=mention_all).failures
+    )
 
 
 def report_push_failures(failures: list[str]) -> None:
@@ -352,7 +358,9 @@ def main(
         entries = split_account_entries(cookie_value)
     except ConfigError as exc:
         log(f"❌ {exc}")
-        report_push_failures(send("夸克自动签到（配置错误）", str(exc)))
+        report_push_failures(
+            send("夸克自动签到（配置错误）", str(exc), mention_all=True)
+        )
         return 2
 
     register_account_secrets(cookie_value, entries)
@@ -389,7 +397,8 @@ def main(
     title = "夸克自动签到"
     if failures:
         title = f"夸克自动签到（{failures} 个账号失败）"
-    report_push_failures(send(title, summary))
+    # 只要有账号失败，汇总消息就在群里 @全员；全部成功时保持安静。
+    report_push_failures(send(title, summary, mention_all=bool(failures)))
     log(
         f"\n----------执行完毕：成功 {len(entries) - failures}，失败 {failures}----------"
     )

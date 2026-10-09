@@ -112,6 +112,24 @@ class WecomTests(unittest.TestCase):
         self.assertNotIn("markdown", kwargs["json"])
         self.assertIn("✅ 签到成功", kwargs["json"]["text"]["content"])
 
+    def test_failure_message_mentions_everyone(self):
+        """签到失败时企业微信消息必须 @全员。"""
+
+        session = FakeSession([FakeResponse({"errcode": 0})])
+        WecomNotifier(WECOM_URL, session=session).send(
+            Message("夸克自动签到（1 个账号失败）", "❌ 凭证失效", mention_all=True)
+        )
+        text = session.calls[0][2]["json"]["text"]
+        self.assertEqual(text["mentioned_list"], ["@all"])
+        self.assertIn("❌ 凭证失效", text["content"])
+
+    def test_success_message_does_not_mention(self):
+        """签到正常时报文保持原样，不带 mentioned_list。"""
+
+        session = FakeSession([FakeResponse({"errcode": 0})])
+        WecomNotifier(WECOM_URL, session=session).send(Message("标题", "正文"))
+        self.assertNotIn("mentioned_list", session.calls[0][2]["json"]["text"])
+
     def test_long_content_fits_text_message_limit(self):
         """企业微信 text 消息上限 2048 字节，超长内容必须截断。"""
 
@@ -162,6 +180,23 @@ class FeishuTests(unittest.TestCase):
         self.assertEqual(kwargs["json"]["msg_type"], "text")
         self.assertIn("✅ 签到成功", kwargs["json"]["content"]["text"])
 
+    def test_failure_message_mentions_everyone(self):
+        """签到失败时飞书正文必须包含 @全员 的 at 标签。"""
+
+        session = FakeSession([FakeResponse({"code": 0, "msg": "success"})])
+        FeishuNotifier(FEISHU_URL, session=session).send(
+            Message("标题", "❌ 凭证失效", mention_all=True)
+        )
+        text = session.calls[0][2]["json"]["content"]["text"]
+        self.assertIn('<at user_id="all">所有人</at>', text)
+
+    def test_success_message_has_no_at_tag(self):
+        """签到正常时正文不包含任何 at 标签。"""
+
+        session = FakeSession([FakeResponse({"code": 0, "msg": "success"})])
+        FeishuNotifier(FEISHU_URL, session=session).send(Message("标题", "正文"))
+        self.assertNotIn("<at", session.calls[0][2]["json"]["content"]["text"])
+
     def test_secret_adds_valid_signature(self):
         session = FakeSession([FakeResponse({"code": 0, "msg": "success"})])
         notifier = FeishuNotifier(FEISHU_URL, secret="s3cret", session=session)
@@ -211,6 +246,30 @@ class DingTalkTests(unittest.TestCase):
         body = session.calls[0][2]["json"]
         self.assertEqual(body["msgtype"], "markdown")
         self.assertEqual(body["markdown"]["title"], "夸克自动签到")
+
+    def test_failure_message_mentions_everyone(self):
+        """签到失败时钉钉报文必须 isAtAll 且正文包含 @所有人。"""
+
+        session = FakeSession([FakeResponse({"errcode": 0, "errmsg": "ok"})])
+        DingTalkNotifier(
+            "https://oapi.dingtalk.com/robot/send?access_token=tok", session=session
+        ).send(Message("标题", "❌ 凭证失效", mention_all=True))
+
+        body = session.calls[0][2]["json"]
+        self.assertTrue(body["at"]["isAtAll"])
+        self.assertIn("@所有人", body["markdown"]["text"])
+
+    def test_success_message_does_not_mention(self):
+        """签到正常时不带 at 字段，正文也不出现 @所有人。"""
+
+        session = FakeSession([FakeResponse({"errcode": 0, "errmsg": "ok"})])
+        DingTalkNotifier(
+            "https://oapi.dingtalk.com/robot/send?access_token=tok", session=session
+        ).send(Message("标题", "正文"))
+
+        body = session.calls[0][2]["json"]
+        self.assertNotIn("at", body)
+        self.assertNotIn("@所有人", body["markdown"]["text"])
 
 
 class SynologyChatTests(unittest.TestCase):
@@ -382,6 +441,24 @@ class GenericWebhookTests(unittest.TestCase):
         self.assertEqual(kwargs["json"]["title"], "夸克自动签到")
         self.assertEqual(kwargs["json"]["source"], notify.NOTIFY_GROUP)
 
+    def test_failure_message_includes_mention_all_flag(self):
+        """签到失败时通用 Webhook 报文必须带 mention_all: true。"""
+
+        session = FakeSession([FakeResponse({})])
+        GenericWebhookNotifier("https://example.test/hook", session=session).send(
+            Message("标题", "❌ 凭证失效", mention_all=True)
+        )
+        self.assertTrue(session.calls[0][2]["json"]["mention_all"])
+
+    def test_success_message_omits_mention_all_flag(self):
+        """签到正常时报文不包含 mention_all 字段。"""
+
+        session = FakeSession([FakeResponse({})])
+        GenericWebhookNotifier("https://example.test/hook", session=session).send(
+            Message("标题", "正文")
+        )
+        self.assertNotIn("mention_all", session.calls[0][2]["json"])
+
     def test_invalid_headers_json_raises(self):
         with self.assertRaisesRegex(NotifyError, "JSON"):
             GenericWebhookNotifier(
@@ -485,6 +562,38 @@ class PushTests(unittest.TestCase):
             result = push("标题", "正文", env={})
         self.assertEqual(result.sent, ())
         self.assertIn("坏渠道 推送异常：RuntimeError", result.failures[0])
+
+    def test_push_forwards_mention_all_to_notifiers(self):
+        """push 必须把 mention_all 标记放进 Message 交给各渠道。"""
+
+        captured = []
+
+        class SpyNotifier(notify.Notifier):
+            label = "间谍渠道"
+
+            def send(self, message):
+                captured.append(message)
+
+        with mock.patch.object(
+            notify, "build_notifiers", return_value=[SpyNotifier()]
+        ):
+            push("标题", "正文", env={}, mention_all=True)
+        self.assertTrue(captured[0].mention_all)
+
+    def test_push_defaults_mention_all_to_false(self):
+        captured = []
+
+        class SpyNotifier(notify.Notifier):
+            label = "间谍渠道"
+
+            def send(self, message):
+                captured.append(message)
+
+        with mock.patch.object(
+            notify, "build_notifiers", return_value=[SpyNotifier()]
+        ):
+            push("标题", "正文", env={})
+        self.assertFalse(captured[0].mention_all)
 
 
 class CommandLineTests(unittest.TestCase):

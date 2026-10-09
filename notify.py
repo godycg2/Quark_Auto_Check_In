@@ -22,6 +22,11 @@
 - ``NOTIFY_ENABLED``：设为 ``false`` 时禁用全部推送。
 - ``NOTIFY_TIMEOUT``：单次请求超时秒数，默认 10。
 
+当调用方把消息标记为失败（``mention_all=True``）时，企业微信、飞书、
+钉钉的群消息会自动 @全员；通用 Webhook 的报文会额外带上
+``mention_all: true`` 字段。个人推送类渠道（Server 酱、Bark 等）没有
+@全员的概念，报文保持不变；成功消息同样不会 @ 任何人。
+
 Webhook 类渠道的变量可以填多个地址（每行一个），实现一次签到推送到多个群。
 
 推送失败不会抛出异常，也不会影响签到脚本的退出码，只会在日志中以
@@ -138,6 +143,8 @@ class Message:
 
     title: str
     content: str
+    #: 是否需要在群里 @全员（仅对支持该能力的群机器人渠道生效）。
+    mention_all: bool = False
 
     def text(self) -> str:
         if not self.title:
@@ -299,12 +306,13 @@ class WecomNotifier(Notifier):
         self.endpoint = webhook
 
     def send(self, message: Message) -> None:
+        text: dict[str, object] = {"content": self.render(message)}
+        if message.mention_all:
+            # 企业微信群机器人通过 mentioned_list 里的 "@all" 实现 @全员。
+            text["mentioned_list"] = ["@all"]
         payload = self._post(
             self.endpoint,
-            json={
-                "msgtype": "text",
-                "text": {"content": self.render(message)},
-            },
+            json={"msgtype": "text", "text": text},
         )
         self._require_ok(payload, payload.get("errcode"))
 
@@ -328,9 +336,13 @@ class FeishuNotifier(Notifier):
         return base64.b64encode(digest).decode("utf-8")
 
     def send(self, message: Message) -> None:
+        text = self.render(message)
+        if message.mention_all:
+            # 飞书自定义机器人用 <at user_id="all"> 在文本消息里 @全员。
+            text = f'{text}\n<at user_id="all">所有人</at>'
         body: dict[str, object] = {
             "msg_type": "text",
-            "content": {"text": self.render(message)},
+            "content": {"text": text},
         }
         if self.secret:
             timestamp = str(int(time.time()))
@@ -353,16 +365,16 @@ class DingTalkNotifier(Notifier):
         self.endpoint = dingtalk_endpoint(webhook, secret)
 
     def send(self, message: Message) -> None:
-        payload = self._post(
-            self.endpoint,
-            json={
-                "msgtype": "markdown",
-                "markdown": {
-                    "title": message.title or NOTIFY_GROUP,
-                    "text": self.render(message),
-                },
-            },
-        )
+        markdown: dict[str, object] = {
+            "title": message.title or NOTIFY_GROUP,
+            "text": self.render(message),
+        }
+        body: dict[str, object] = {"msgtype": "markdown", "markdown": markdown}
+        if message.mention_all:
+            # 钉钉 markdown @全员：除 at.isAtAll 外，正文还需包含 @所有人。
+            markdown["text"] = f"{markdown['text']}\n\n@所有人"
+            body["at"] = {"isAtAll": True}
+        payload = self._post(self.endpoint, json=body)
         self._require_ok(payload, payload.get("errcode"))
 
 
@@ -613,13 +625,17 @@ class GenericWebhookNotifier(Notifier):
         return {str(key): str(value) for key, value in parsed.items()}
 
     def send(self, message: Message) -> None:
+        body: dict[str, object] = {
+            "title": message.title,
+            "content": message.content,
+            "source": NOTIFY_GROUP,
+        }
+        if message.mention_all:
+            # 交给接收方自行实现 @全员逻辑。
+            body["mention_all"] = True
         self._post(
             self.endpoint,
-            json={
-                "title": message.title,
-                "content": message.content,
-                "source": NOTIFY_GROUP,
-            },
+            json=body,
             headers=self.extra_headers(),
         )
 
@@ -855,13 +871,19 @@ def push(
     env: Mapping[str, str] | None = None,
     timeout: float | None = None,
     session_factory: Callable[[], requests.Session] | None = None,
+    mention_all: bool = False,
 ) -> PushResult:
     """把结果推送到所有已配置渠道，返回成功与失败明细。
 
-    单个渠道失败不会影响其他渠道，也不会抛出异常。
+    单个渠道失败不会影响其他渠道，也不会抛出异常。``mention_all`` 为
+    True 时，支持群 @全员的渠道会在失败消息里 @所有人。
     """
 
-    message = Message(title=redact(title), content=redact(content))
+    message = Message(
+        title=redact(title),
+        content=redact(content),
+        mention_all=mention_all,
+    )
     sent: list[str] = []
     failures: list[str] = []
     for notifier in build_notifiers(env, timeout, session_factory):

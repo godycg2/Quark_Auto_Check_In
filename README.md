@@ -12,6 +12,7 @@
 - 多账号逐个执行；某个账号失败不会阻断其他账号。
 - 任何账号失败时工作流返回失败，并保留当天第二次重试机会。
 - 签到结束后把汇总结果推送到企业微信、飞书、钉钉、群晖 Chat 等 11 种渠道。
+- 签到失败（含部分账号失败、配置错误）时，企业微信、飞书、钉钉的推送消息自动 **@全员**；全部成功时消息不 @ 任何人。
 - 每月在独立的 `heartbeat` 分支生成保活提交，不污染 `main` 历史。
 
 ## 📋 使用方法
@@ -143,7 +144,7 @@ user=账号一; url=https://...; && user=账号二; url=https://...;
 | Telegram | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | |
 | ntfy | `NTFY_TOPIC`，可选 `NTFY_SERVER`、`NTFY_TOKEN` | 默认服务器 `https://ntfy.sh` |
 | Gotify | `GOTIFY_URL` + `GOTIFY_TOKEN` | |
-| 通用 Webhook | `GENERIC_WEBHOOK`，可选 `GENERIC_WEBHOOK_HEADERS` | 以 `{"title", "content", "source"}` 形式 POST，认证头用 JSON 对象填写 |
+| 通用 Webhook | `GENERIC_WEBHOOK`，可选 `GENERIC_WEBHOOK_HEADERS` | 以 `{"title", "content", "source"}` 形式 POST，签到失败时额外带 `mention_all: true`；认证头用 JSON 对象填写 |
 
 两个通用开关：
 
@@ -161,6 +162,7 @@ https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=yyy
 
 - 推送内容按账号逐条列出，标题行使用 `COOKIE_QUARK` 中的 `user` 备注名，并用 ✅/❌ 标出每个账号的成败；没写 `user` 时回退为「账号1」「账号2」。
 - 有账号失败时，消息标题会变成「夸克自动签到（N 个账号失败）」，方便在通知栏直接看到整体结果。
+- 签到失败时（部分账号失败或 `COOKIE_QUARK` 配置错误），企业微信、飞书、钉钉的消息会自动 **@全员**；全部账号成功时消息保持安静、不 @ 任何人。个人推送类渠道（Server 酱、PushPlus、Bark、Telegram、ntfy、Gotify）没有 @全员概念，报文不变。
 - 推送发生在所有账号处理完之后；签到成功、部分失败、以及 `COOKIE_QUARK` 配置错误时都会推送。
 - 单个渠道失败只在日志里输出 `⚠️ 推送失败：…`，**不会**改变签到任务的成败，也不会因为推送失败而触发签到重试。
 - 日志只显示渠道域名（如 `qyapi.weixin.qq.com`），不会打印完整 Webhook 地址或密钥。

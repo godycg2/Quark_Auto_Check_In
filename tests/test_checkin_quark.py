@@ -247,8 +247,10 @@ class MainNotificationTests(unittest.TestCase):
         self.assertEqual(title, "夸克自动签到")
         self.assertIn("共 1 个账号，成功 1，失败 0", content)
         self.assertIn("✅ 签到成功", content)
+        # 全部成功时消息保持安静，不 @ 任何人。
+        self.assertFalse(push_mock.call_args.kwargs.get("mention_all"))
 
-    def test_configuration_error_is_pushed_too(self):
+    def test_configuration_error_message_mentions_everyone(self):
         with mock.patch(
             "checkIn_Quark.notify.push", return_value=notify.PushResult()
         ) as push_mock:
@@ -259,6 +261,8 @@ class MainNotificationTests(unittest.TestCase):
         title, content = push_mock.call_args.args
         self.assertEqual(title, "夸克自动签到（配置错误）")
         self.assertIn("COOKIE_QUARK", content)
+        # 配置错误属于签到失败，消息必须 @全员。
+        self.assertTrue(push_mock.call_args.kwargs["mention_all"])
 
     def test_push_failure_does_not_change_exit_code(self):
         failure = "企业微信（example.test）请求失败（HTTP 500）"
@@ -319,6 +323,8 @@ class MainNotificationTests(unittest.TestCase):
         self.assertIn("❌ 第 2 个账号（坏账号）", content)
         self.assertIn("共 2 个账号，成功 1，失败 1", content)
         self.assertIn("凭证失效", content)
+        # 只要有账号失败，汇总消息就必须 @全员。
+        self.assertTrue(push_mock.call_args.kwargs["mention_all"])
 
     def test_invalid_entry_is_still_reported_by_user_note(self):
         with mock.patch(
